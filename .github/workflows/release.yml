@@ -24,6 +24,12 @@ jobs:
         with:
           # 手动 dispatch 时按输入版本检出对应 tag,产物与 tag 严格一致
           ref: ${{ inputs.version || github.ref_name }}
+      - name: 版本一致性断言(VERSION 与 tag 对齐——错 tag/错内容拒发)
+        run: |
+          VER=${{ inputs.version || github.ref_name }}
+          if [ -f VERSION ]; then
+            [ "$(cat VERSION)" = "${VER#v}" ] || { echo "::error::VERSION=$(cat VERSION) ≠ tag $VER——发版走 hub 列车 bump,勿手改 VERSION/tag 错位"; exit 1; }
+          fi
       - name: 组装 SPK(tag v0.1.0 → 包版本 0.1.0-0001)
         run: |
           VER="${{ inputs.version || github.ref_name }}"
