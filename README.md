@@ -12,6 +12,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **群晖 Syn
 - JWT 密钥首启自动生成并持久化到数据目录，重启/升级不丢
 - **卸载保留数据**（SQLite + 上传文件 + 密钥都在你指定的数据目录）
 - 升级套件自动对齐镜像版本（`.env` 的 `PB_IMAGE_TAG` 随包刷新）
+- 设备直传：server 镜像自 1.21.0 起随包 p2pc，SPK compose 部署即具设备直传能力；admin「系统配置→P2P」分区热启停联邦与设备直传
 
 > 系统要求：**DSM 7.2+**，且套件中心已安装 **Container Manager**（24.0.2+，编排依赖 `docker compose` v2 子命令）。DSM 7.0/7.1（Docker 套件时代）暂不支持。
 
@@ -27,8 +28,8 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **群晖 Syn
 
 > NAS 首次启动需从 ghcr.io 拉取镜像（约 200MB）。国内网络拉取慢/失败时，可 SSH 到 NAS 手动导入后重启套件：
 > ```sh
-> sudo docker pull ghcr.io/pigeonbox/server:0.15.9
-> sudo docker pull ghcr.io/pigeonbox/frontend:0.15.9
+> sudo docker pull ghcr.io/pigeonbox/server:1.21.0
+> sudo docker pull ghcr.io/pigeonbox/frontend:1.21.0
 > ```
 > （镜像版本以 `数据目录/.env` 里的 `PB_IMAGE_TAG` 为准。）
 
@@ -38,7 +39,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **群晖 Syn
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PB_IMAGE_TAG` | `v0.15.8` | 镜像版本（升级套件会自动刷新，勿手改） |
+| `PB_IMAGE_TAG` | `1.21.0` | 镜像版本（升级套件会自动刷新，勿手改） |
 | `PB_API_PORT` | `12345` | 对外端口（改动后建议同步改数据目录所在防火墙规则） |
 | `PB_DATA_DIR` | 安装向导值 | 数据目录（SQLite+上传文件+JWT 密钥；**备份它=备份全部**） |
 | `PB_ADMIN_PASSWORD` | 空 | 管理员密码（**必填**：留空=容器拒绝启动；首次启动以此建号，之后改密码请在网页修改） |
@@ -65,7 +66,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **群晖 Syn
 
 ## 开发与构建
 
-共享资产（`compose.yml` / `env.example`）的**真相源在生态主仓 [`deploy/nas/`](https://github.com/pigeonbox/pigeonbox/tree/main/deploy/nas)**：改编排/默认值请改 hub 模板后执行 `bash deploy/nas/sync.sh sync`，**勿直接改本仓这两个文件**——CI 有「与 hub 模板对齐」漂移门禁，模板一动未同步的仓全部变红。跟随 server 新镜像版本走发版列车：hub 仓 `scripts/nas-release-train.sh <镜像tag> --push` 一条命令完成四处钉版+打 tag。
+共享资产（`compose.yml` / `env.example`）的**真相源在生态主仓 [`deploy/nas/`](https://github.com/pigeonbox/pigeonbox/tree/main/deploy/nas)**：改编排/默认值请改 hub 模板后执行 `bash deploy/nas/sync.sh sync --all`（单仓 `sync --platform <p> --dir <仓>`），**勿直接改本仓这两个文件**——CI 有「与 hub 模板对齐」漂移门禁，模板一动未同步的仓全部变红。跟随 server 新镜像版本走发布列车 v2：hub `make train-bump TRAIN=x.y.z`（`release/trainctl` 状态机）统一完成镜像钉版刷新与各仓打 tag。
 仓库结构：`spk/`（INFO 模板 / scripts / conf / WIZARD_UIFILES / 图标 / compose 编排）+ `scripts/build-spk.sh`（纯 tar 组装，无需官方 toolchain）。
 
 ```sh
