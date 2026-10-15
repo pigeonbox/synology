@@ -72,7 +72,7 @@ jobs:
           # 外层未压缩 tar 用 -xOf 取 package.tgz 原始字节,再由第二个 tar 解包(gzip)
           tar -xOf "$SPK" package.tgz | tar -tz | grep -qx compose.yml
           tar -xOf "$SPK" package.tgz | tar -tz | grep -qx env.example
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: spk
           path: dist/*.spk

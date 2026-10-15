@@ -34,7 +34,7 @@ jobs:
         run: |
           VER="${{ inputs.version || github.ref_name }}"
           ./scripts/build-spk.sh "${VER#v}" 0001
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: spk
           path: dist/*.spk
