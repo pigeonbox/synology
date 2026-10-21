@@ -22,6 +22,7 @@ services:
       - PB_JWT_SECRET=${PB_JWT_SECRET:-}
       # 管理员密码必填(PB_PRODUCTION=1,留空=容器拒绝启动——防 admin/admin123 弱口令上线), .env 注入
       - PB_ADMIN_PASSWORD=${PB_ADMIN_PASSWORD:-}
+      - PB_SETUP_TOKEN=${PB_SETUP_TOKEN:-}
       # 对外完整地址(生成分享链接用; 有域名/HTTPS 反代时在 .env 填)
       - PB_SERVER_BASE_URL=${PB_SERVER_BASE_URL:-}
       # NAS 场景默认关闭开放注册(管理员建号), 与 fnos 适配层同款
