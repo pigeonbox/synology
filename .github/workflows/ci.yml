@@ -13,7 +13,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck(bash 严格模式与 sh 兼容性)
         run: |
           shellcheck -s sh spk/scripts/*
@@ -39,13 +39,13 @@ jobs:
     # start-stop-status 全流程/postupgrade 版本对齐。DSM 集成仍需真机。
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: tests/run-tests.sh
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: 组装 SPK(CI 版本 0.0.0-0001)
         run: ./scripts/build-spk.sh 0.0.0 0001
       - name: 结构断言
@@ -72,7 +72,7 @@ jobs:
           # 外层未压缩 tar 用 -xOf 取 package.tgz 原始字节,再由第二个 tar 解包(gzip)
           tar -xOf "$SPK" package.tgz | tar -tz | grep -qx compose.yml
           tar -xOf "$SPK" package.tgz | tar -tz | grep -qx env.example
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: spk
           path: dist/*.spk
