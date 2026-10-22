@@ -46,7 +46,26 @@ cp -R spk/WIZARD_UIFILES "$STAGE/WIZARD_UIFILES"
 cp spk/PACKAGE_ICON.PNG spk/PACKAGE_ICON_256.PNG spk/LICENSE "$STAGE/"
 
 # 文本统一 LF(脚本/INFO 混入 CRLF 是套件执行失败的经典坑)
-find "$STAGE" -type f -exec perl -pi -e 's/\r$//' {} +
+#
+# 2026-10-22 关键修正:**必须排除二进制**(package.tgz / 图标 PNG)。
+# perl -pi 按「行」处理文件,行尾 = \n。gzip 的 deflate 数据里**可能**出现
+# 0x0D 0x0A 字节对,一旦出现,`s/\r$//` 就把那个 \r 当行尾删掉 ⇒
+# **gzip 流被改坏**(CI 报 gzip: invalid compressed data--crc error)。
+# 是否命中该字节对取决于压缩产物 ⇒ 表现为**间歇性**(同一 commit push 事件红、
+# PR 事件绿);macOS 与 Linux 的压缩字节不同 ⇒ 本地难以复现。
+#
+# 二进制文件一律不过 perl(只对文本做 LF 归一)。
+find "$STAGE" -type f ! -name "*.tgz" ! -name "*.png" ! -name "*.PNG" \
+    -exec perl -pi -e 's/\r$//' {} +
+
+# 自校验:package.tgz 在 INFO 里记了 md5,归一化之后必须仍然一致。
+# 不一致 = 有二进制被当文本改写了(本 bug 的指纹),构建即红,不让坏包流到 CI。
+CHECKSUM_NOW="$(md5 -q "$STAGE/package.tgz" 2>/dev/null || md5sum "$STAGE/package.tgz" | cut -d' ' -f1)"
+if [ "$CHECKSUM_NOW" != "$CHECKSUM" ]; then
+    echo "✗ package.tgz 在 LF 归一化后被改写(校验和 $CHECKSUM → $CHECKSUM_NOW)" >&2
+    echo "  ⇒ 二进制文件误入文本归一范围,查 find 的排除模式" >&2
+    exit 1
+fi
 
 OUT="dist/pigeonbox_${INFO_VERSION}.spk"
 mkdir -p dist
