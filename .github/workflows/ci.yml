@@ -70,8 +70,12 @@ jobs:
           tar -tvf "$SPK" | grep -q 'scripts/start-stop-status' && \
             tar -tvf "$SPK" | awk '$1 ~ /^-rwx/ && $0 ~ /scripts\/start-stop-status/ {found=1} END{exit !found}'
           # 外层未压缩 tar 用 -xOf 取 package.tgz 原始字节,再由第二个 tar 解包(gzip)
-          tar -xOf "$SPK" package.tgz | tar -tz | grep -qx compose.yml
-          tar -xOf "$SPK" package.tgz | tar -tz | grep -qx env.example
+          # 2026-10-22:先落临时文件再解包,不走管道 —— 管道让第二个 tar 从 stdin 读
+          # 归档,对 tar 实现(GNU 块因子/流式读)敏感,实弹出现过同一 commit 的
+          # push 事件红(PR 事件绿)的间歇性 crc error。落文件后校验路径确定。
+          tar -xOf "$SPK" package.tgz > /tmp/pkg.tgz
+          tar -tzf /tmp/pkg.tgz | grep -qx compose.yml
+          tar -tzf /tmp/pkg.tgz | grep -qx env.example
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: spk
