@@ -25,7 +25,8 @@ assert_count() {
 }
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+OK=0
+trap 'rc=$?; rm -rf "$TMP"; if [ "$rc" -ne 0 ]; then exit $rc; fi; if [ "${OK:-0}" != 1 ]; then exit 1; fi; exit 0' EXIT
 
 # ── mock docker:调用记录到 MOCK_LOG,行为由计数文件/开关控制 ──
 MOCK_LOG="$TMP/mock-docker.log"
@@ -40,13 +41,16 @@ case "$1" in
             n=$(cat "$f")
             if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$f"; exit 1; fi
         fi
+        OK=1
         exit 0
         ;;
     ps)
         [ "${MOCK_PS_EMPTY:-0}" = "1" ] || echo "c0ffee"
+        OK=1
         exit 0
         ;;
     *)
+        OK=1
         exit 0
         ;;
 esac
@@ -162,7 +166,9 @@ assert_eq "重试后 start 成功" "$?" "0"
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "✓ 全部通过"
+    OK=1
     exit 0
 fi
 echo "✗ ${FAIL} 项失败"
 exit 1
+OK=1

@@ -25,7 +25,8 @@ case "$BUILD" in
 esac
 INFO_VERSION="${VERSION}-${BUILD}"
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+OK=0
+trap 'rc=$?; rm -rf "$STAGE"; if [ "$rc" -ne 0 ]; then exit $rc; fi; if [ "${OK:-0}" != 1 ]; then exit 1; fi; exit 0' EXIT
 
 # package.tgz:内容解压到 SYNOPKG_PKGDEST(target),升级随包整体替换
 PKGDIR="$STAGE/package"
@@ -73,3 +74,4 @@ tar -cf "$OUT" -C "$STAGE" \
     INFO package.tgz scripts conf WIZARD_UIFILES \
     PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG LICENSE
 echo "✓ ${OUT}"
+OK=1
