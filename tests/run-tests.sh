@@ -26,6 +26,7 @@ assert_count() {
 
 TMP="$(mktemp -d)"
 OK=0
+# shellcheck disable=SC2154  # rc 在 trap 体内赋值，shellcheck 看不见
 trap 'rc=$?; rm -rf "$TMP"; if [ "$rc" -ne 0 ]; then exit $rc; fi; if [ "${OK:-0}" != 1 ]; then exit 1; fi; exit 0' EXIT
 
 # ── mock docker:调用记录到 MOCK_LOG,行为由计数文件/开关控制 ──
@@ -171,4 +172,3 @@ if [ "$FAIL" -eq 0 ]; then
 fi
 echo "✗ ${FAIL} 项失败"
 exit 1
-OK=1
