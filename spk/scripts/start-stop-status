@@ -34,7 +34,13 @@ case "$1" in
         DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
         if [ -n "$DATA_DIR" ] && [ "$DATA_DIR" != "/" ]; then
             mkdir -p "$DATA_DIR" 2>/dev/null || true
-            chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
+            # ⚠️ 只改目录本身，**不要 -R**（2026-11-06）：容器以 1000:1000 写入，
+            # 目录里既有文件的属主本就正确；每次 start 全量 chown 是 O(全部文件)
+            # 的系统调用风暴（几十 GB 数据目录在低端机型可达数十秒 ⇒ 套件中心判
+            # 「启动超时」），且会把用户手工放进数据目录的文件所有权一并改掉。
+            # 仅在目录自身属主不对时才动（stat 缺失则照旧执行一次，仍是非递归）。
+            _cur=$(stat -c '%u:%g' "$DATA_DIR" 2>/dev/null || echo "")
+            [ "$_cur" = "1000:1000" ] || chown 1000:1000 "$DATA_DIR" 2>/dev/null || true
         fi
         # Container Manager 守护进程偶发未就绪(开机竞态):最多等 30 秒
         i=0
@@ -53,9 +59,16 @@ case "$1" in
         ;;
     status)
         # LSF 语义:0=运行中,3=未运行,4=未知
-        out="$("$DOCKER" ps --filter "name=pigeonbox-frontend" --filter "name=pigeonbox-server" --filter "status=running" -q 2>/dev/null)"
-        [ -n "$out" ] && exit 0
-        exit 3
+        #
+        # ⚠️ 必须**两个容器都在跑**才算运行中（2026-11-06）：此前一条 docker ps
+        # 里写两个 --filter name=…（同键多值在 docker 里是 OR）⇒ 只起了一个也报
+        # 「运行中」——半死状态在套件中心完全看不出来（前端挂了用户看到白屏，
+        # 后端挂了用户看到 502，而面板显示"运行中"）。
+        for _c in pigeonbox-server pigeonbox-frontend; do
+            _run=$("$DOCKER" ps --filter "name=${_c}" --filter "status=running" -q 2>/dev/null)
+            [ -n "$_run" ] || exit 3
+        done
+        exit 0
         ;;
     log)
         echo "$LOG_FILE"
