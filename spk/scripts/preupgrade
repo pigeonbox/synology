@@ -1,3 +1,51 @@
 #!/bin/sh
-# preupgrade —— 注意:全新安装时本脚本也会执行,无事可做必须 exit 0
+# preupgrade —— DSM 在「旧套件已停、新版本文件尚未就位」的窗口里调用本脚本。
+#
+# 职责：把业务库快照一份（保留最近 3 份），失败则中止升级。
+#
+# 为什么要备份：升级后首次启动会跑 SQLite schema 自动迁移，而历史上 4.0.0 是
+# **不可逆**的（DROP 掉死列 + 磁盘布局上提）。套件中心「装回旧版本」只是换回旧
+# 二进制,旧代码读到已迁移过的库不会自己变回去 —— 没有升级前快照就没有回滚点。
+# 时机：DSM 先 stop 再跑本脚本 ⇒ 容器已停、库文件静止 ⇒ 快照一致,且仍是旧 schema。
+#
+# 为什么备份失败要中止：赌不起的时候不赌。库拷不动通常是卷满/权限变了,
+# 此时继续升级 = 在「没有回滚点」的状态下跑不可逆迁移。中止后旧版本与数据
+# 原封不动,用户清出空间重试即可。
+#
+# 注意：全新安装时本脚本也会执行 ⇒ 没有库就直接 exit 0（不能因为「无东西可备份」而中止）。
+set -u
+
+PKG="pigeonbox"
+PKGVAR="${SYNOPKG_PKGVAR:-/var/packages/${PKG}/var}"
+ENV_FILE="${PKGVAR}/.env"
+
+# 数据目录口径必须与 start-stop-status / postinst 完全一致（.env 的 PB_DATA_DIR,
+# 安装向导写入的绝对路径）。读不到就退回套件 var 目录;那里也没有库即视为「无库」。
+DATA_DIR=""
+[ -f "$ENV_FILE" ] && DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
+[ -n "$DATA_DIR" ] || DATA_DIR="${PKGVAR}/data"
+DB="${DATA_DIR}/fileCodeBox.db"
+
+# 无库（全新安装）或零字节（尚未初始化）⇒ 没有可备份的东西,放行
+[ -s "$DB" ] || exit 0
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+BAK="${DB}.bak-${STAMP}"
+if ! cp "$DB" "$BAK" 2>/dev/null; then
+    echo "preupgrade: 升级前备份业务库失败,已中止升级 —— 源 [${DB}] 目标 [${BAK}]" >&2
+    echo "preupgrade: 常见原因:数据卷已满 / 权限变化。已装版本与数据均未改动,清理后重试升级。" >&2
+    exit 1
+fi
+
+# 轮转:只保留最近 3 份（与 fnOS 的 cmd/upgrade_callback、QTS 的 pkg_pre_install 同口径）
+# 排序用**名字**而不是 mtime:文件名是定宽时间戳(YYYYMMDD-HHMMSS),字典序=时间序;
+# 而 mtime 会被 cp -a / 备份还原 / 时钟跳变改掉,反而不确定。
+for old in "${DB}".bak-*; do
+    [ -f "$old" ] || continue
+    printf '%s\n' "$old"
+done | sort -r | tail -n +4 | while read -r f; do
+    rm -f "$f"
+done
+
+echo "preupgrade: 已快照业务库 -> ${BAK}"
 exit 0

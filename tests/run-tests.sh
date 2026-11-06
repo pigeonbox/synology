@@ -164,6 +164,73 @@ MOCK_INFO_FAIL_FILE="$TMP/info-fails" SYNOPKG_DOCKER_BIN="$TMP/mock-docker" \
     sh spk/scripts/start-stop-status start
 assert_eq "重试后 start 成功" "$?" "0"
 
+# 快照文件枚举/计数(用 glob 而非 ls:shellcheck SC2012 会判红,且 glob 在无匹配时
+# 保持字面量,配 [ -f ] 判断即可)
+bak_count() {
+    _n=0
+    for _f in "$1"/fileCodeBox.db.bak-*; do
+        [ -f "$_f" ] && _n=$((_n + 1))
+    done
+    echo "$_n"
+}
+bak_newest() {
+    for _f in "$1"/fileCodeBox.db.bak-*; do
+        [ -f "$_f" ] && printf '%s\n' "$_f"
+    done | sort -r | head -1
+}
+
+echo "── T10 preupgrade:升级前快照业务库(轮转保留 3 份)"
+# 迁移前快照 = 唯一回滚点(4.0.0 的删列/布局上提不可逆)。DSM 先 stop 再跑本
+# 脚本 ⇒ 库静止且仍是旧 schema。全新安装时本脚本也会跑 ⇒ 没有库必须放行。
+# T8 把 .env 重置成模板(PB_DATA_DIR 为空)⇒ 这里先恢复安装向导形态的 .env,
+# 顺带覆盖「按 .env 的 PB_DATA_DIR 定位数据目录」这条口径。
+printf 'PB_API_PORT=8080\nPB_DATA_DIR=%s\n' "$DATA" > "$VAR/.env"
+rm -f "$DATA/fileCodeBox.db" "$DATA"/fileCodeBox.db.bak-* 2>/dev/null
+SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" sh spk/scripts/preupgrade
+assert_eq "无库(全新安装)放行" "$?" "0"
+if [ "$(bak_count "$DATA")" -gt 0 ]; then
+    fail "无库时不该产生快照"
+else
+    ok "无库时未产生快照"
+fi
+
+printf 'OLD-SCHEMA-DB' > "$DATA/fileCodeBox.db"
+SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" sh spk/scripts/preupgrade
+assert_eq "有库时退出码 0" "$?" "0"
+assert_eq "生成 1 份快照" "$(bak_count "$DATA")" "1"
+assert_eq "快照与源库逐字一致" "$(cat "$(bak_newest "$DATA")")" "OLD-SCHEMA-DB"
+# 轮转:预置 3 份更旧的快照(名字里的时间戳更早),新快照进来后总数必须仍是 3
+# ⇒ 最旧的一份被删。轮转按**名字**排序,故这里不依赖 mtime,无需 touch。
+rm -f "$DATA"/fileCodeBox.db.bak-* 2>/dev/null
+for _s in 20000101-000001 20000101-000002 20000101-000003; do
+    printf 'x' > "$DATA/fileCodeBox.db.bak-$_s"
+done
+SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" sh spk/scripts/preupgrade
+assert_eq "第 4 份进来后仍只保留 3 份" "$(bak_count "$DATA")" "3"
+# 反向:被删的必须是最旧那份(名字最小),否则等于删掉了最有用的回滚点
+if [ -f "$DATA/fileCodeBox.db.bak-20000101-000001" ]; then
+    fail "轮转删错了对象(最旧的一份仍在)"
+else
+    ok "轮转删的是最旧的一份"
+fi
+
+echo "── T11 preupgrade:备份失败中止升级(root 下无法注入,跳过)"
+# 赌不起的时候不赌:库拷不动(卷满/权限变了)时继续升级 = 在没有回滚点的状态下
+# 跑不可逆迁移。用权限位注入 cp 失败;root 可无视权限位 ⇒ 跳过以免假红。
+if [ "$(id -u)" -ne 0 ]; then
+    _before=$(bak_count "$DATA")
+    chmod 000 "$DATA/fileCodeBox.db"
+    if ( SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" sh spk/scripts/preupgrade ) >/dev/null 2>&1; then
+        fail "备份失败未被拦下(应中止升级)"
+    else
+        ok "备份失败时中止升级(旧版本与数据不动)"
+    fi
+    chmod 600 "$DATA/fileCodeBox.db"
+    assert_eq "中止路径不留下半份快照" "$(bak_count "$DATA")" "$_before"
+else
+    ok "root 环境无法用权限位注入 cp 失败,跳过中止分支"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "✓ 全部通过"
