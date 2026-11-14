@@ -15,17 +15,32 @@ if [ ! -f "$ENV_FILE" ]; then
     chmod 600 "$ENV_FILE"
 fi
 
+# 数据目录必须是「卷下的子目录」(如 /volume1/docker/pigeonbox)——synology#149:
+# 卷根本身(/volume1)或系统目录(/etc 等)一旦被递归 chown 会改掉整个卷/系统属主,
+# 破坏面远超本套件。判据与向导同款:卷族前缀 + 子目录 + 拒 .. 穿越。
+valid_data_dir() {
+    case "$1" in
+        */../*|*/..|../*|..) return 1 ;;
+    esac
+    printf '%s' "$1" | grep -Eq '^/volume[^/]+/.+$'
+}
+
 DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
 if [ -n "$DATA_DIR" ] && [ "$DATA_DIR" != "/" ]; then
-    # 新建目录必须在卷下(向导只放行 /volume*,这里兜住 CLI/脚本装机);
-    # 已存在的目录(升级路径)不回溯拒绝——存量部署不因升级被拒启
-    if [ ! -d "$DATA_DIR" ] && [ "${DATA_DIR#/volume}" = "$DATA_DIR" ]; then
-        echo "数据目录必须位于卷下（如 /volume1/docker/pigeonbox）: $DATA_DIR" >&2
+    if valid_data_dir "$DATA_DIR"; then
+        mkdir -p "$DATA_DIR"
+        # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进。
+        # ⚠️ 只改目录自身,**不要 -R**(对齐 start-stop-status 的做法):递归 chown
+        # 是 O(全部文件) 的属主风暴,且会改掉用户手工放进数据目录的文件所有权。
+        chown 1000:1000 "$DATA_DIR" 2>/dev/null || true
+    elif [ -d "$DATA_DIR" ]; then
+        # 存量非卷路径(如历史自定义挂载)不回溯拒绝——升级不因旧路径被拒启;
+        # 但绝不对其 chown(路径不经校验就不动属主)。
+        echo "数据目录不在「卷下子目录」形态,升级放行但不改属主: $DATA_DIR" >&2
+    else
+        echo "数据目录必须是卷下的子目录（如 /volume1/docker/pigeonbox；卷根/系统目录不可用）: $DATA_DIR" >&2
         exit 1
     fi
-    mkdir -p "$DATA_DIR"
-    # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进
-    chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
 fi
 
 cat > "$SYNOPKG_TEMP_LOGFILE" <<EOF

@@ -149,6 +149,64 @@ assert_ne "postinst 拒绝非卷新数据目录" "$?" "0"
 run_postinst_with /volume1/pb-accept-test 2>/dev/null
 assert_eq "postinst 接受 /volume* 新数据目录" "$?" "0"
 
+echo "── T15 postinst:卷根/存量路径不得被 chown(递归 chown 消灭,synology#149 残留)"
+# 静态负对照:PR#150 后仍残留的两处——postinst 递归 chown -R、向导只查 /volume 前缀
+# (卷根 /volume1 也能过)。先把这两条钉死,再用 chown 探针验证运行期行为。
+assert_count "postinst 无递归 chown(-R)" "$(cat spk/scripts/postinst)" "chown -R" 0
+assert_contains "向导校验收紧到卷下子目录" "$(cat spk/WIZARD_UIFILES/install_uifile)" 'volume[^/]+'
+assert_count "向导旧弱校验(indexOf /volume)已移除" "$(cat spk/WIZARD_UIFILES/install_uifile)" "indexOf('/volume')" 0
+
+# chown 探针:PATH 前置同名 shim,记录每次调用并放行成功 ⇒ 「谁被 chown 了」可断言
+# (非 root 下真 chown 到 1000 会静默失败,owner 观测不到;探针让调用本身可见)。
+PROBE_DIR="$TMP/probe-bin"
+mkdir -p "$PROBE_DIR"
+cat > "$PROBE_DIR/chown" <<'PROBE'
+#!/bin/sh
+echo "chown $*" >> "${CHOWN_LOG:?}"
+exit 0
+PROBE
+chmod +x "$PROBE_DIR/chown"
+CHOWN_LOG="$TMP/chown.log"
+export CHOWN_LOG
+
+run_postinst_probe() {
+    _pv="$TMP/var-t15"
+    rm -rf "$_pv"
+    mkdir -p "$_pv"
+    PATH="$PROBE_DIR:$PATH" SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$_pv" SYNOPKG_TEMP_LOGFILE="$LOGMSG" \
+        wizard_host_port=8080 wizard_data_dir="$1" wizard_admin_password=s3cret \
+        sh spk/scripts/postinst
+}
+
+# ① 存量非卷目录:升级放行,但绝不对它 chown(旧代码 chown -R 整目录 ⇒ 本条负对照)
+EXISTING="$TMP/t15-existing"
+mkdir -p "$EXISTING"
+: > "$CHOWN_LOG"
+run_postinst_probe "$EXISTING" 2>/dev/null
+assert_eq "存量非卷目录:升级放行" "$?" "0"
+assert_count "存量非卷目录:未执行 chown" "$(cat "$CHOWN_LOG")" "chown" 0
+
+# ② 卷根 /volume1:无论如何都不得 chown(issue 正文负对照);测试机无卷时还须拒装
+: > "$CHOWN_LOG"
+run_postinst_probe /volume1 2>/dev/null
+_rc15=$?
+assert_count "卷根 /volume1:未执行 chown" "$(cat "$CHOWN_LOG")" "chown" 0
+if [ ! -d /volume1 ]; then
+    assert_ne "卷根 /volume1(不存在):拒绝安装" "$_rc15" "0"
+fi
+
+# ③ 卷下子目录(新建):必须 chown —— 合法路径的属主修复不能被误伤
+: > "$CHOWN_LOG"
+run_postinst_probe /volume1/t15-accept 2>/dev/null
+assert_eq "卷下子目录:放行" "$?" "0"
+assert_count "卷下子目录:执行了属主修复" "$(cat "$CHOWN_LOG")" "chown 1000:1000 /volume1/t15-accept" 1
+
+# ④ 新建非卷目录:拒装且不 chown
+: > "$CHOWN_LOG"
+run_postinst_probe "$TMP/t15-new-reject" 2>/dev/null
+assert_ne "新建非卷目录:拒绝安装" "$?" "0"
+assert_count "新建非卷目录:未执行 chown" "$(cat "$CHOWN_LOG")" "chown" 0
+
 echo "── T4 start:按 .env 组装 compose 命令"
 : > "$MOCK_LOG"
 SYNOPKG_DOCKER_BIN="$TMP/mock-docker" SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" \
