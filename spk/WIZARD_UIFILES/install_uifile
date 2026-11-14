@@ -31,8 +31,8 @@
             "desc": "绝对路径",
             "defaultValue": "/volume1/docker/pigeonbox",
             "validator": {
-              "fn": "function(v){return Object.prototype.toString.call(v)==='[object String]' && v.indexOf('/volume')===0;}",
-              "errorText": "数据目录必须位于卷下（如 /volume1/docker/pigeonbox）"
+              "fn": "function(v){return Object.prototype.toString.call(v)==='[object String]' && /^\\/volume[^/]+\\/.+/.test(v) && !/(^|\\/)\\.\\.(\\/|$)/.test(v);}",
+              "errorText": "数据目录必须是卷下的子目录（如 /volume1/docker/pigeonbox；卷根 /volume1、系统目录、.. 穿越均不可用）"
             }
           }
         ]
