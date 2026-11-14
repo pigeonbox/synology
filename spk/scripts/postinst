@@ -17,6 +17,12 @@ fi
 
 DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
 if [ -n "$DATA_DIR" ] && [ "$DATA_DIR" != "/" ]; then
+    # 新建目录必须在卷下(向导只放行 /volume*,这里兜住 CLI/脚本装机);
+    # 已存在的目录(升级路径)不回溯拒绝——存量部署不因升级被拒启
+    if [ ! -d "$DATA_DIR" ] && [ "${DATA_DIR#/volume}" = "$DATA_DIR" ]; then
+        echo "数据目录必须位于卷下（如 /volume1/docker/pigeonbox）: $DATA_DIR" >&2
+        exit 1
+    fi
     mkdir -p "$DATA_DIR"
     # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进
     chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true

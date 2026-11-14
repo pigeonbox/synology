@@ -23,6 +23,14 @@ assert_count() {
     n=$(printf '%s\n' "$2" | grep -c "$3" 2>/dev/null || true)
     if [ "${n:-0}" -eq "$want" ]; then ok "$1"; else fail "$1 (期望恰好 $want 行 [$3],实际 ${n:-0} 行)"; fi
 }
+assert_ne() {
+    if [ "$2" != "$3" ]; then ok "$1"; else fail "$1 (期望不等于 [$3],实际 [$2])"; fi
+}
+# GNU stat 先(-c 权限);macOS BSD stat 无 -c 会失败,再落 -f '%Lp'(顺序不可换:
+# GNU 的 -f 是"文件系统状态"且成功返回,放前面会吞掉兜底)
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
 
 TMP="$(mktemp -d)"
 OK=0
@@ -68,6 +76,10 @@ export MOCK_LOG
 echo "── T1 postinst:向导值注入 .env"
 DATA="$TMP/nasdata"
 LOGMSG="$TMP/usermsg.html"
+# postinst 新约束:「尚不存在的目录」必须 /volume* —— 测试机无卷可写,预创建
+# $DATA 走「存量目录放行」分支(与真机升级路径同分支,不误伤)。新建目录的
+# mkdir 分支在测试机不可测(创建 /volume* 需 root),由真机安装覆盖。
+mkdir -p "$DATA"
 SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" SYNOPKG_TEMP_LOGFILE="$LOGMSG" \
     wizard_host_port=8080 wizard_data_dir="$DATA" wizard_admin_password=s3cret \
     sh spk/scripts/postinst
@@ -78,10 +90,8 @@ assert_contains ".env 注入数据目录" "$(cat "$VAR/.env")" "PB_DATA_DIR=$DAT
 assert_contains ".env 注入密码"    "$(cat "$VAR/.env")" "PB_ADMIN_PASSWORD=s3cret"
 assert_count   ".env 模板行保留且唯一(IMAGE_TAG)" "$(cat "$VAR/.env")" "^PB_IMAGE_TAG="
 assert_count   ".env 注册开关保留且唯一"           "$(cat "$VAR/.env")" "^PB_USER_ALLOW_REGISTRATION="
-# GNU stat 先(-c 权限);macOS BSD stat 无 -c 会失败,再落 -f '%Lp'(顺序不可换:
-# GNU 的 -f 是"文件系统状态"且成功返回,放前面会吞掉兜底)
-assert_eq      ".env 权限 600" "$(stat -c '%a' "$VAR/.env" 2>/dev/null || stat -f '%Lp' "$VAR/.env")" "600"
-if [ -d "$DATA" ]; then ok "数据目录已创建"; else fail "数据目录未创建"; fi
+assert_eq      ".env 权限 600" "$(file_mode "$VAR/.env")" "600"
+if [ -d "$DATA" ]; then ok "存量数据目录放行后仍在"; else fail "存量数据目录被误删/误拒"; fi
 assert_contains "用户消息含端口" "$(cat "$LOGMSG")" "8080"
 
 echo "── T2 postinst:重复执行不覆盖既有 .env"
@@ -104,6 +114,12 @@ assert_contains "镜像 tag 刷新到包内真相源($WANT_TAG)" "$(cat "$VAR/.e
 assert_contains "端口保留"               "$(cat "$VAR/.env")" "PB_API_PORT=8080"
 assert_count   "IMAGE_TAG 恰好一行"      "$(cat "$VAR/.env")" "^PB_IMAGE_TAG="
 
+# T13: postupgrade 后 .env 权限必须仍为 600(mv 重写曾把 600 放宽成 644,synology#148)
+# 前置:复用 T3 的升级脚本执行现场——必须紧跟 postupgrade 之后,
+# 后面 T3.5/T10 都会用 printf 重写 .env(默认 umask ⇒ 644),挪走就测不到升级脚本了。
+mode=$(file_mode "$VAR/.env")
+assert_eq "postupgrade 后 .env 权限" "$mode" "600"
+
 echo "── T3.5 postupgrade:1.14.3 形态(FCB_ 前缀)存量 .env 迁移到 PB_"
 printf 'FCB_API_PORT=8080\nFCB_DATA_DIR=%s\nFCB_ADMIN_PASSWORD=s3cret\nFCB_IMAGE_TAG=v1.14.3\nPB_USER_ALLOW_REGISTRATION=false\n' "$DATA" > "$VAR/.env"
 SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$VAR" SYNOPKG_PKGVER="1.14.4-0001" SYNOPKG_TEMP_LOGFILE="$LOGMSG" \
@@ -115,6 +131,23 @@ assert_contains "迁移:数据目录" "$(cat "$VAR/.env")" "PB_DATA_DIR=$DATA"
 assert_contains "迁移:密码"     "$(cat "$VAR/.env")" "PB_ADMIN_PASSWORD=s3cret"
 assert_contains "迁移:镜像对齐" "$(cat "$VAR/.env")" "PB_IMAGE_TAG=$WANT_TAG"
 assert_count   "迁移:无 FCB_ 残留" "$(cat "$VAR/.env")" "^FCB_" 0
+
+echo "── T14 postinst:新数据目录必须 /volume*(存量目录不误伤)"
+# 以全新 PKGVAR 重放 postinst(wizard_* 注入),覆盖向导/CLI 装机入口。
+# 约束只作用于「尚不存在的目录」——升级路径上的存量目录不回溯拒绝。
+# 拒绝用例落在 $TMP 下(非 /volume* 即可):RED 阶段脚本会真 mkdir,写 /etc 会污染机器。
+run_postinst_with() {
+    _pv="$TMP/var-t14"
+    rm -rf "$_pv"
+    mkdir -p "$_pv"
+    SYNOPKG_PKGDEST="$DEST" SYNOPKG_PKGVAR="$_pv" SYNOPKG_TEMP_LOGFILE="$LOGMSG" \
+        wizard_host_port=8080 wizard_data_dir="$1" wizard_admin_password=s3cret \
+        sh spk/scripts/postinst
+}
+run_postinst_with "$TMP/pb-reject-test" 2>/dev/null
+assert_ne "postinst 拒绝非卷新数据目录" "$?" "0"
+run_postinst_with /volume1/pb-accept-test 2>/dev/null
+assert_eq "postinst 接受 /volume* 新数据目录" "$?" "0"
 
 echo "── T4 start:按 .env 组装 compose 命令"
 : > "$MOCK_LOG"
