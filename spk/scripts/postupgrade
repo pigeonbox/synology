@@ -3,6 +3,9 @@
 # 注:1.14.x 起包版本=发布列车号(1.15.x),与镜像版本(0.15.x)脱钩,且 ghcr
 # tag 无 v 前缀——旧「v+包主版本」推导会指向不存在的 tag,升级后拉镜像必败
 # (2026-10-10 修正:真相源=包根 env.example,由发布列车 bump 写入)。
+# .env 含 PB_ADMIN_PASSWORD:后续 sed>tmp;mv 重写一律 600 落盘(umask 兜底 +
+# 末尾显式 chmod 双保险;曾因默认 umask 022 把 600 放宽成 644,synology#148)
+umask 077
 ENV_FILE="${SYNOPKG_PKGVAR}/.env"
 [ -f "$ENV_FILE" ] || exit 0
 
@@ -29,6 +32,9 @@ if [ -n "$IMG_TAG" ]; then
     printf 'PB_IMAGE_TAG=%s\n' "$IMG_TAG" >> "${ENV_FILE}.tmp"
     mv "${ENV_FILE}.tmp" "$ENV_FILE"
 fi
+
+# 兜底收口:哪怕本轮一条重写都没走到(如 IMG_TAG 为空),也把权限按 600 钉死
+chmod 600 "$ENV_FILE" 2>/dev/null || true
 
 cat > "$SYNOPKG_TEMP_LOGFILE" <<EOF
 <p>PigeonBox 已升级到 ${NEW_VER}${IMG_TAG:+,镜像版本已对齐为 ${IMG_TAG}}。</p>

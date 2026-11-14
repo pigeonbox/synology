@@ -31,8 +31,8 @@
             "desc": "绝对路径",
             "defaultValue": "/volume1/docker/pigeonbox",
             "validator": {
-              "fn": "function(v){return Object.prototype.toString.call(v)==='[object String]' && v.indexOf('/')===0;}",
-              "errorText": "必须是以 / 开头的绝对路径"
+              "fn": "function(v){return Object.prototype.toString.call(v)==='[object String]' && v.indexOf('/volume')===0;}",
+              "errorText": "数据目录必须位于卷下（如 /volume1/docker/pigeonbox）"
             }
           }
         ]
