@@ -15,19 +15,36 @@
 # 用法: ./scripts/build-spk.sh <版本号> <构建号>
 #   例: ./scripts/build-spk.sh 0.1.0 0001   → dist/pigeonbox_0.1.0-0001.spk
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-VERSION="${1:?用法: build-spk.sh <版本号> <构建号>(例: 0.1.0 0001)}"
+# ── shellkit（编译侧统一管道；**设备侧脚本一律不引**，见 C1） ───────────────
+# third_party/shellkit 是上游镜像（由 hub 侧 scripts/vendor-shellkit.sh 物化）⇒ **勿手改**。
+# ⚠️ 落点是 third_party/ 而不是 vendor/：Go ≥1.14 见到**模块根**下有 vendor/ 就默认切
+#    vendor 模式 ⇒ 缺 vendor/modules.txt ⇒ go build 报 "inconsistent vendoring"（实测现红）。
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$REPO_ROOT/third_party/shellkit/lib/bootstrap.sh"
+export SHELLKIT_LANG="${SHELLKIT_LANG:-zh_CN}" # 库内消息走中文，与生态输出一致
+
+cd "$REPO_ROOT"
+
+VERSION="${1:?用法: build-spk.sh [版本号] [构建号](例: 0.1.0 0001)}"
 BUILD="${2:?缺少构建号(例: 0001)}"
 case "$BUILD" in
-    [0-9][0-9][0-9][0-9]) ;;
-    *) echo "构建号须为 4 位数字(例: 0001)" >&2; exit 1 ;;
+  [0-9][0-9][0-9][0-9]) ;;
+  *)
+    log_error "构建号须为 4 位数字(例: 0001)"
+    exit 1
+    ;;
 esac
 INFO_VERSION="${VERSION}-${BUILD}"
 STAGE="$(mktemp -d)"
-OK=0
-# shellcheck disable=SC2154  # rc 在 trap 体内赋值，shellcheck 看不见
-trap 'rc=$?; rm -rf "$STAGE"; if [ "$rc" -ne 0 ]; then exit $rc; fi; if [ "${OK:-0}" != 1 ]; then exit 1; fi; exit 0' EXIT
+# 清理栈 + trap 安装（shellkit 接管 EXIT/INT/TERM/HUP）：处理器取 $? 后原样
+# `exit "$__st"` ⇒ **退出码照旧透传** ⇒ 与原手写 trap 等价。
+# ⚠️ 原 trap 的「rc==0 且 OK!=1 ⇒ 判失败」成功哨兵**已移除**：本脚本的失败出口穷举为
+#   「`${1:?}`/`${2:?}` 退 1、`case` 不匹配退 1、校验和不一致退 1、`set -e` 下命令失败非 0」
+#   ⇒ 「跑完却没成功」的出口不存在 ⇒ 哨兵不可达 ⇒ 与原语义等价。
+# shellcheck disable=SC2016  # 单引号是**故意的**：清理命令要在 trap 触发时再求值
+trap_push 'rm -rf "$STAGE"'
+trap_install
 
 # package.tgz:内容解压到 SYNOPKG_PKGDEST(target),升级随包整体替换
 PKGDIR="$STAGE/package"
@@ -38,7 +55,7 @@ CHECKSUM="$(md5 -q "$STAGE/package.tgz" 2>/dev/null || md5sum "$STAGE/package.tg
 
 # INFO:注入版本与校验和
 sed -e "s/__VERSION__/${INFO_VERSION}/" -e "s/__CHECKSUM__/${CHECKSUM}/" \
-    spk/INFO.tmpl > "$STAGE/INFO"
+  spk/INFO.tmpl >"$STAGE/INFO"
 
 # scripts/conf/WIZARD/图标/LICENSE
 cp -R spk/scripts "$STAGE/scripts"
@@ -58,21 +75,20 @@ cp spk/PACKAGE_ICON.PNG spk/PACKAGE_ICON_256.PNG spk/LICENSE "$STAGE/"
 #
 # 二进制文件一律不过 perl(只对文本做 LF 归一)。
 find "$STAGE" -type f ! -name "*.tgz" ! -name "*.png" ! -name "*.PNG" \
-    -exec perl -pi -e 's/\r$//' {} +
+  -exec perl -pi -e 's/\r$//' {} +
 
 # 自校验:package.tgz 在 INFO 里记了 md5,归一化之后必须仍然一致。
 # 不一致 = 有二进制被当文本改写了(本 bug 的指纹),构建即红,不让坏包流到 CI。
 CHECKSUM_NOW="$(md5 -q "$STAGE/package.tgz" 2>/dev/null || md5sum "$STAGE/package.tgz" | cut -d' ' -f1)"
 if [ "$CHECKSUM_NOW" != "$CHECKSUM" ]; then
-    echo "✗ package.tgz 在 LF 归一化后被改写(校验和 $CHECKSUM → $CHECKSUM_NOW)" >&2
-    echo "  ⇒ 二进制文件误入文本归一范围,查 find 的排除模式" >&2
-    exit 1
+  log_error "package.tgz 在 LF 归一化后被改写(校验和 $CHECKSUM → $CHECKSUM_NOW)"
+  log_error "⇒ 二进制文件误入文本归一范围,查 find 的排除模式"
+  exit 1
 fi
 
 OUT="dist/pigeonbox_${INFO_VERSION}.spk"
 mkdir -p dist
 tar -cf "$OUT" -C "$STAGE" \
-    INFO package.tgz scripts conf WIZARD_UIFILES \
-    PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG LICENSE
-echo "✓ ${OUT}"
-OK=1
+  INFO package.tgz scripts conf WIZARD_UIFILES \
+  PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG LICENSE
+log_ok "${OUT}"
