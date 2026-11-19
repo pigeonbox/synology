@@ -31,7 +31,7 @@ cd "$REPO_ROOT"
 #    缺文件 ⇒ 装机后所有生命周期脚本 fail-closed 退 5 ⇒ 套件装了也起不来。
 POSIX_LIB="spk/scripts/lib/shellkit-posix.sh"
 if [ ! -f "$POSIX_LIB" ]; then
-  log_error "缺设备侧 POSIX 子集: $POSIX_LIB（装机后生命周期脚本会退 5）"
+  log_error "缺设备侧 POSIX 子集: ${POSIX_LIB}（装机后生命周期脚本会退 5）"
   exit 1
 fi
 
