@@ -1,7 +1,30 @@
 #!/bin/sh
 # postinst —— 初始化数据目录与 .env(向导值经 wizard_* 环境变量注入)
+
+# ── shellkit POSIX 子集（设备侧唯一可用的 shellkit 形态）──────────────────
+# 落点探测：① 环境变量 PB_SHELLKIT_POSIX ② 脚本同目录 lib/ ③ 脚本同目录
+#           ④ DSM 套件目录（装机后的绝对路径）
+# ⚠️ 缺失即 fail-closed 退 5：设备侧脚本是「装机即执行」的，装坏了现场补不了
+#    （与 fnOS 预接线「缺了就优雅降级」不同——那边是可选功能，这边是生命周期本体）。
+_sk_dir="$(dirname "$0")"
+_sk_lib=""
+for _sk_c in \
+    "${PB_SHELLKIT_POSIX:-}" \
+    "${_sk_dir}/lib/shellkit-posix.sh" \
+    "${_sk_dir}/shellkit-posix.sh" \
+    "/var/packages/pigeonbox/scripts/lib/shellkit-posix.sh"
+do
+    if [ -n "$_sk_c" ] && [ -r "$_sk_c" ]; then _sk_lib="$_sk_c"; break; fi
+done
+if [ -z "$_sk_lib" ]; then
+    echo "缺 shellkit POSIX 子集（装的是不完整的包）" >&2
+    exit 5
+fi
+# shellcheck disable=SC1090  # 动态源：库路径按候选探测，shellcheck 跟不了
+. "$_sk_lib"
+
 ENV_FILE="${SYNOPKG_PKGVAR}/.env"
-mkdir -p "$SYNOPKG_PKGVAR"
+fs_ensure_dir "$SYNOPKG_PKGVAR"
 
 if [ ! -f "$ENV_FILE" ]; then
     # 从模板生成:先剔除要注入的三行,再追加向导值(避免 sed 注入/转义问题)
@@ -28,7 +51,7 @@ valid_data_dir() {
 DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
 if [ -n "$DATA_DIR" ] && [ "$DATA_DIR" != "/" ]; then
     if valid_data_dir "$DATA_DIR"; then
-        mkdir -p "$DATA_DIR"
+        fs_ensure_dir "$DATA_DIR"
         # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进。
         # ⚠️ 只改目录自身,**不要 -R**(对齐 start-stop-status 的做法):递归 chown
         # 是 O(全部文件) 的属主风暴,且会改掉用户手工放进数据目录的文件所有权。

@@ -26,6 +26,15 @@ export SHELLKIT_LANG="${SHELLKIT_LANG:-zh_CN}" # 库内消息走中文，与生�
 
 cd "$REPO_ROOT"
 
+# ── 设备侧 POSIX 子集（装机后生命周期脚本 . 之它）─────────────────────────
+# ⚠️ 必须**逐字**进包：改一个字节就与上游镜像脱钩，且设备侧装载的是被改坏的库。
+#    缺文件 ⇒ 装机后所有生命周期脚本 fail-closed 退 5 ⇒ 套件装了也起不来。
+POSIX_LIB="spk/scripts/lib/shellkit-posix.sh"
+if [ ! -f "$POSIX_LIB" ]; then
+  log_error "缺设备侧 POSIX 子集: $POSIX_LIB（装机后生命周期脚本会退 5）"
+  exit 1
+fi
+
 VERSION="${1:?用法: build-spk.sh [版本号] [构建号](例: 0.1.0 0001)}"
 BUILD="${2:?缺少构建号(例: 0001)}"
 case "$BUILD" in
@@ -60,6 +69,8 @@ sed -e "s/__VERSION__/${INFO_VERSION}/" -e "s/__CHECKSUM__/${CHECKSUM}/" \
 # scripts/conf/WIZARD/图标/LICENSE
 cp -R spk/scripts "$STAGE/scripts"
 chmod 0755 "$STAGE/scripts/"*
+# POSIX 子集是被 . 引入的库，不是可执行脚本 ⇒ 0644（与 fnOS 侧同一约定）
+chmod 0644 "$STAGE/scripts/lib/shellkit-posix.sh"
 cp -R spk/conf "$STAGE/conf"
 cp -R spk/WIZARD_UIFILES "$STAGE/WIZARD_UIFILES"
 cp spk/PACKAGE_ICON.PNG spk/PACKAGE_ICON_256.PNG spk/LICENSE "$STAGE/"
@@ -86,9 +97,26 @@ if [ "$CHECKSUM_NOW" != "$CHECKSUM" ]; then
   exit 1
 fi
 
+# POSIX 子集在 LF 归一后必须仍与源文件逐字一致（归一化若动了它 ⇒ 设备侧装载的是被改坏的库）
+_posix_src_sum="$(net_sha256 "$POSIX_LIB" || true)"
+_posix_dst_sum="$(net_sha256 "$STAGE/scripts/lib/shellkit-posix.sh" || true)"
+if [ -z "$_posix_src_sum" ] || [ "$_posix_src_sum" != "$_posix_dst_sum" ]; then
+  log_error "设备侧 POSIX 子集在 LF 归一后被改写（${_posix_src_sum:-无摘要} → ${_posix_dst_sum:-无摘要}）"
+  exit 1
+fi
+
 OUT="dist/pigeonbox_${INFO_VERSION}.spk"
 mkdir -p dist
 tar -cf "$OUT" -C "$STAGE" \
   INFO package.tgz scripts conf WIZARD_UIFILES \
   PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG LICENSE
+
+# 产物自检：POSIX 子集必须真的在包里的 scripts/lib/ 下（cp -R 漏层级是最可能的坑）
+# 清单落文件再 grep：tar|grep -q 会在 grep 先退出时把 tar 打成 SIGPIPE(141)
+# ⇒ pipefail 下误判「缺文件」。
+tar -tf "$OUT" > "$STAGE/spk.list"
+if ! grep -qx 'scripts/lib/shellkit-posix.sh' "$STAGE/spk.list"; then
+  log_error "SPK 里缺 scripts/lib/shellkit-posix.sh"
+  exit 1
+fi
 log_ok "${OUT}"

@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck(bash 严格模式与 sh 兼容性)
         run: |
-          shellcheck -s sh spk/scripts/*
+          # spk/scripts/lib/ 是目录，shellcheck 不接目录参数（报 "is a directory" 且退 2）
+          # ⇒ 改用 find -type f 逐文件扫（覆盖范围与原 glob 一致，并含 lib/ 下的 POSIX 子集）
+          find spk/scripts -type f -print0 | xargs -0 shellcheck -s sh
           shellcheck -s sh tests/run-tests.sh
       - name: compose 模板校验
         run: docker compose -f spk/package/compose.yml config -q
@@ -117,6 +119,7 @@ jobs:
           # 顶层清单齐备
           tar -tf "$SPK" | sort > /tmp/spk.list
           for f in INFO package.tgz scripts/ scripts/start-stop-status scripts/postinst \
+                   scripts/lib/shellkit-posix.sh \
                    conf/privilege WIZARD_UIFILES/install_uifile \
                    PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG LICENSE; do
             grep -qx "$f" /tmp/spk.list || { echo "缺 $f"; exit 1; }
