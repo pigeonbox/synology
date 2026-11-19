@@ -1,6 +1,30 @@
 #!/bin/sh
 # preinst —— 安装前校验(必须无副作用;非零退出中止安装)
 # ContainerManager 依赖已由 INFO install_dep_packages 保证,这里兜底探测 docker CLI。
+
+# ── shellkit POSIX 子集（设备侧唯一可用的 shellkit 形态）──────────────────
+# 落点探测：① 环境变量 PB_SHELLKIT_POSIX ② 脚本同目录 lib/ ③ 脚本同目录
+#           ④ DSM 套件目录（装机后的绝对路径）
+# ⚠️ 缺失即 fail-closed 退 5：设备侧脚本是「装机即执行」的，装坏了现场补不了
+#    （与 fnOS 预接线「缺了就优雅降级」不同——那边是可选功能，这边是生命周期本体）。
+_sk_dir="$(dirname "$0")"
+_sk_lib=""
+for _sk_c in \
+    "${PB_SHELLKIT_POSIX:-}" \
+    "${_sk_dir}/lib/shellkit-posix.sh" \
+    "${_sk_dir}/shellkit-posix.sh" \
+    "/var/packages/pigeonbox/scripts/lib/shellkit-posix.sh"
+do
+    if [ -n "$_sk_c" ] && [ -r "$_sk_c" ]; then _sk_lib="$_sk_c"; break; fi
+done
+if [ -z "$_sk_lib" ]; then
+    echo "缺 shellkit POSIX 子集（装的是不完整的包）" >&2
+    exit 5
+fi
+# shellcheck disable=SC1090  # 动态源：库路径按候选探测，shellcheck 跟不了
+. "$_sk_lib"
+
+# docker 探测：原样保留（安装前置判据，缺 docker ⇒ 套件装了也起不来）
 if [ ! -x /usr/local/bin/docker ] && ! command -v docker >/dev/null 2>&1; then
     echo "未找到 docker 命令:请先在套件中心安装并启动 Container Manager" > "$SYNOPKG_TEMP_LOGFILE"
     exit 1

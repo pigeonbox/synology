@@ -2,6 +2,29 @@
 # start-stop-status —— 套件生命周期:start/stop/status(+log 供 synopkg log)
 # 编排:compose.yml 随包装入 SYNOPKG_PKGDEST(升级随包更新);
 #       .env 在 SYNOPKG_PKGVAR(@appdata,升级/重装保留)。
+
+# ── shellkit POSIX 子集（设备侧唯一可用的 shellkit 形态）──────────────────
+# 落点探测：① 环境变量 PB_SHELLKIT_POSIX ② 脚本同目录 lib/ ③ 脚本同目录
+#           ④ DSM 套件目录（装机后的绝对路径）
+# ⚠️ 缺失即 fail-closed 退 5：设备侧脚本是「装机即执行」的，装坏了现场补不了
+#    （与 fnOS 预接线「缺了就优雅降级」不同——那边是可选功能，这边是生命周期本体）。
+_sk_dir="$(dirname "$0")"
+_sk_lib=""
+for _sk_c in \
+    "${PB_SHELLKIT_POSIX:-}" \
+    "${_sk_dir}/lib/shellkit-posix.sh" \
+    "${_sk_dir}/shellkit-posix.sh" \
+    "/var/packages/pigeonbox/scripts/lib/shellkit-posix.sh"
+do
+    if [ -n "$_sk_c" ] && [ -r "$_sk_c" ]; then _sk_lib="$_sk_c"; break; fi
+done
+if [ -z "$_sk_lib" ]; then
+    echo "缺 shellkit POSIX 子集（装的是不完整的包）" >&2
+    exit 5
+fi
+# shellcheck disable=SC1090  # 动态源：库路径按候选探测，shellcheck 跟不了
+. "$_sk_lib"
+
 PKG="pigeonbox"
 # SYNOPKG_DOCKER_BIN 仅供测试注入 mock(DSM 运行环境不会设置此变量)
 DOCKER="${SYNOPKG_DOCKER_BIN:-/usr/local/bin/docker}"
@@ -27,13 +50,13 @@ case "$1" in
     start)
         if [ ! -f "$ENV_FILE" ]; then
             # 兜底:向导流程未生成时用默认值(理论上 postinst 已生成)
-            mkdir -p "$PKGVAR"
+            fs_ensure_dir "$PKGVAR"
             cp "${PKGDEST}/env.example" "$ENV_FILE"
             chmod 600 "$ENV_FILE"
         fi
         DATA_DIR=$(sed -n 's|^PB_DATA_DIR=||p' "$ENV_FILE" | head -n 1)
         if [ -n "$DATA_DIR" ] && [ "$DATA_DIR" != "/" ]; then
-            mkdir -p "$DATA_DIR" 2>/dev/null || true
+            fs_ensure_dir "$DATA_DIR" 2>/dev/null || true
             # ⚠️ 只改目录本身，**不要 -R**（2026-11-06）：容器以 1000:1000 写入，
             # 目录里既有文件的属主本就正确；每次 start 全量 chown 是 O(全部文件)
             # 的系统调用风暴（几十 GB 数据目录在低端机型可达数十秒 ⇒ 套件中心判

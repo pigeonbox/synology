@@ -6,7 +6,35 @@
 # .env 含 PB_ADMIN_PASSWORD:后续 sed>tmp;mv 重写一律 600 落盘(umask 兜底 +
 # 末尾显式 chmod 双保险;曾因默认 umask 022 把 600 放宽成 644,synology#148)
 umask 077
+
+# ── shellkit POSIX 子集（设备侧唯一可用的 shellkit 形态）──────────────────
+# 落点探测：① 环境变量 PB_SHELLKIT_POSIX ② 脚本同目录 lib/ ③ 脚本同目录
+#           ④ DSM 套件目录（装机后的绝对路径）
+# ⚠️ 缺失即 fail-closed 退 5：设备侧脚本是「装机即执行」的，装坏了现场补不了
+#    （与 fnOS 预接线「缺了就优雅降级」不同——那边是可选功能，这边是生命周期本体）。
+_sk_dir="$(dirname "$0")"
+_sk_lib=""
+for _sk_c in \
+    "${PB_SHELLKIT_POSIX:-}" \
+    "${_sk_dir}/lib/shellkit-posix.sh" \
+    "${_sk_dir}/shellkit-posix.sh" \
+    "/var/packages/pigeonbox/scripts/lib/shellkit-posix.sh"
+do
+    if [ -n "$_sk_c" ] && [ -r "$_sk_c" ]; then _sk_lib="$_sk_c"; break; fi
+done
+if [ -z "$_sk_lib" ]; then
+    echo "缺 shellkit POSIX 子集（装的是不完整的包）" >&2
+    exit 5
+fi
+# shellcheck disable=SC1090  # 动态源：库路径按候选探测，shellcheck 跟不了
+. "$_sk_lib"
+
 ENV_FILE="${SYNOPKG_PKGVAR}/.env"
+# 清理栈：下面 sed>tmp;mv 重写的中间产物。失败/中断时残留在 var 目录里，
+# 会让人以为「升到一半」⇒ 用 shellkit 的清理栈兜底（退出码原样透传）。
+# shellcheck disable=SC2016  # 单引号是**故意的**：清理命令要在 trap 触发时再求值
+trap_push 'rm -f "${ENV_FILE}.tmp"'
+trap_install
 [ -f "$ENV_FILE" ] || exit 0
 
 NEW_VER="${SYNOPKG_PKGVER:-}"
